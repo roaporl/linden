@@ -1,40 +1,35 @@
-// Copyright 2016 Xiaomi, Inc.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package com.xiaomi.linden.lucene.analyzer;
 
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.Reader;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 
 import com.google.common.base.Throwables;
+import com.huaban.analysis.jieba.JiebaSegmenter;
+import com.huaban.analysis.jieba.WordDictionary;
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.Tokenizer;
 import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
 import org.apache.lucene.analysis.tokenattributes.OffsetAttribute;
 
-public class LindenMMSeg4jAnalyzer extends Analyzer {
+/**
+ * Created by sls on 17-6-6.
+ */
+public class LindenJiebaAnalyzer extends Analyzer {
 
   private LindenSegmenter segmenter;
 
-  public LindenMMSeg4jAnalyzer(String mode, String dictPath, String stopWordsPath, boolean cutLetterDigit) {
-    segmenter = new CommonMMSeg4jSegmenter(mode, dictPath, stopWordsPath, cutLetterDigit);
+  public LindenJiebaAnalyzer(JiebaSegmenter.SegMode mode, String userDict) {
+    if (userDict != null) {
+      WordDictionary.getInstance().init(Paths.get(userDict));
+    }
+    segmenter = new CommonJiebaSegmenter(mode);
   }
 
-  public class LindenMMSeg4jTokenizer extends Tokenizer {
+  public class LindenJiebaTokenizer extends Tokenizer {
 
     private List<LindenSegmenter.Term> tokens = new ArrayList<>();
     private int currentPos;
@@ -42,7 +37,7 @@ public class LindenMMSeg4jAnalyzer extends Analyzer {
     private CharTermAttribute termAtt;
     private OffsetAttribute offsetAtt;
 
-    protected LindenMMSeg4jTokenizer(final Reader input) {
+    protected LindenJiebaTokenizer(final Reader input) {
       super(input);
       termAtt = addAttribute(CharTermAttribute.class);
       offsetAtt = addAttribute(OffsetAttribute.class);
@@ -91,16 +86,6 @@ public class LindenMMSeg4jAnalyzer extends Analyzer {
 
   @Override
   protected TokenStreamComponents createComponents(String fieldName, Reader reader) {
-    return new TokenStreamComponents(new LindenMMSeg4jTokenizer(reader));
+    return new TokenStreamComponents(new LindenJiebaTokenizer(reader));
   }
-
-  @Override
-  public void close() {
-    try {
-      segmenter.close();
-    } catch (IOException e) {
-      // do nothing
-    }
-  }
-
 }

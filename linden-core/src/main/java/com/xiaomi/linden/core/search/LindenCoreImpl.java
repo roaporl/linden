@@ -19,7 +19,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
-import com.alibaba.fastjson.JSONArray;
+import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Throwables;
@@ -36,6 +36,7 @@ import org.apache.lucene.facet.taxonomy.SearcherTaxonomyManager;
 import org.apache.lucene.facet.taxonomy.directory.DirectoryTaxonomyWriter;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.IndexWriter;
+import org.apache.lucene.index.MergePolicy;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.index.TrackingIndexWriter;
 import org.apache.lucene.search.Collector;
@@ -66,6 +67,7 @@ import com.xiaomi.linden.core.search.query.filter.FilterConstructor;
 import com.xiaomi.linden.core.search.query.sort.SortConstructor;
 import com.xiaomi.linden.lucene.collector.EarlyTerminationCollector;
 import com.xiaomi.linden.lucene.collector.LindenDocsCollector;
+import com.xiaomi.linden.lucene.merge.SortingMergePolicyDecorator;
 import com.xiaomi.linden.thrift.common.FacetDrillingType;
 import com.xiaomi.linden.thrift.common.FileDiskUsageInfo;
 import com.xiaomi.linden.thrift.common.LindenDeleteRequest;
@@ -146,7 +148,7 @@ public class LindenCoreImpl extends LindenCore {
     }
   }
 
-  public LindenResult search(LindenSearchRequest request) throws IOException  {
+  public LindenResult search(LindenSearchRequest request) throws IOException {
     SearcherTaxonomyManager.SearcherAndTaxonomy searcherAndTaxonomy = lindenNRTSearcherManager.acquire();
     try {
       IndexSearcher indexSearcher = searcherAndTaxonomy.searcher;
@@ -172,7 +174,7 @@ public class LindenCoreImpl extends LindenCore {
         } else {
           docs = indexSearcher.search(query, from + size);
         }
-        return resultParser.parse(docs, null, null, null, null);
+        return resultParser.parse(docs, null, null, null);
       }
 
       // group param will suppress facet, group, early termination and search time limit parameters
@@ -188,21 +190,26 @@ public class LindenCoreImpl extends LindenCore {
         groupingSearch.setCachingInMB(8.0, true);
         groupingSearch.setAllGroups(true);
         TopGroups<TopDocs> topGroupedDocs = groupingSearch.search(indexSearcher, query, 0, from + size);
-        return resultParser.parse(null, topGroupedDocs, null, null, null);
+        return resultParser.parse(null, topGroupedDocs, null, null);
       }
 
       TopDocsCollector topDocsCollector;
       if (sort != null) {
-        topDocsCollector = TopFieldCollector.create(sort, from + size, null, true, false, false, true);
+        topDocsCollector = TopFieldCollector.create(sort, from + size, null, true, false, false, false);
       } else {
-        topDocsCollector = TopScoreDocCollector.create(from + size, true);
+        topDocsCollector = TopScoreDocCollector.create(from + size, false);
       }
 
-      EarlyTerminationCollector earlyTerminationCollector = null;
       LindenDocsCollector lindenDocsCollector;
       if (request.isSetEarlyParam()) {
-        earlyTerminationCollector = new EarlyTerminationCollector(topDocsCollector,
-                                                                  request.getEarlyParam().getMaxNum());
+        MergePolicy mergePolicy = indexWriter.getConfig().getMergePolicy();
+        Sort mergePolicySort = null;
+        if (mergePolicy instanceof SortingMergePolicyDecorator) {
+          mergePolicySort = ((SortingMergePolicyDecorator) mergePolicy).getSort();
+        }
+        EarlyTerminationCollector
+            earlyTerminationCollector =
+            new EarlyTerminationCollector(topDocsCollector, mergePolicySort, request.getEarlyParam().getMaxNum());
         lindenDocsCollector = new LindenDocsCollector(earlyTerminationCollector);
       } else {
         lindenDocsCollector = new LindenDocsCollector(topDocsCollector);
@@ -218,7 +225,7 @@ public class LindenCoreImpl extends LindenCore {
       // no facet param
       if (!request.isSetFacet()) {
         indexSearcher.search(query, collector);
-        return resultParser.parse(lindenDocsCollector.topDocs(), null, null, null, earlyTerminationCollector);
+        return resultParser.parse(lindenDocsCollector.topDocs(), null, null, null);
       }
 
       // facet search
@@ -258,7 +265,7 @@ public class LindenCoreImpl extends LindenCore {
           facets = new FastTaxonomyFacetCounts(searcherAndTaxonomy.taxonomyReader, facetsConfig, facetsCollector);
         }
       }
-      return resultParser.parse(lindenDocsCollector.topDocs(), null, facets, facetsCollector, earlyTerminationCollector);
+      return resultParser.parse(lindenDocsCollector.topDocs(), null, facets, facetsCollector);
     } catch (Exception e) {
       throw new IOException(Throwables.getStackTraceAsString(e));
     } finally {
@@ -305,14 +312,15 @@ public class LindenCoreImpl extends LindenCore {
         .setFileUsedInfos(fileDiskUsageInfos);
   }
 
+  @Override
+  public Response mergeIndex(int maxNumSegments) throws IOException {
+    indexWriter.forceMerge(maxNumSegments);
+    return ResponseUtils.SUCCESS;
+  }
+
   // refresh right now
   public void refresh() throws IOException {
     lindenNRTSearcherManager.maybeRefresh();
-  }
-
-  @Override
-  public void merge(int segmentCount) throws IOException {
-    indexWriter.forceMerge(segmentCount);
   }
 
   @Override
@@ -374,21 +382,22 @@ public class LindenCoreImpl extends LindenCore {
     for (LindenField field : lindenDoc.getFields()) {
       oldDoc.remove(field.getSchema().getName());
     }
+
     // merge new fields
     for (LindenField field : lindenDoc.getFields()) {
-      String fieldName = field.getSchema().getName();
-      Object obj = oldDoc.get(fieldName);
-      Object val = LindenUtil.parseLindenValue(field.getValue(), field.schema.getType());
-      if (obj == null) {
-        oldDoc.put(fieldName, val);
-      } else if (obj instanceof JSONArray) {
-        ((JSONArray) obj).add(val);
-      } else {
-        JSONArray array = new JSONArray();
-        array.add(obj);
-        array.add(val);
-        oldDoc.put(fieldName, array);
+      // multi-value field is indexed as 2 parts.
+      // one is each value in the specified schema,
+      // the other is raw JSONArray in string format for source data and score model
+      // so we need convert these 2 parts back to raw JSONArray format in the specified schema
+      if (field.getSchema().isMulti()) {
+        if (field.getSchema().isDocValues()) {
+          oldDoc.put(field.getSchema().getName(), JSON.parseArray(field.getValue()));
+        }
+        continue;
       }
+      String fieldName = field.getSchema().getName();
+      Object val = LindenUtil.parseLindenValue(field.getValue(), field.schema.getType());
+      oldDoc.put(fieldName, val);
     }
 
     LindenDocument newDoc = LindenDocumentBuilder.build(config.getSchema(), oldDoc);
@@ -443,5 +452,8 @@ public class LindenCoreImpl extends LindenCore {
   @Override
   public void commit() throws IOException {
     indexWriter.commit();
+    if (taxoWriter != null) {
+      taxoWriter.commit();
+    }
   }
 }

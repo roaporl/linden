@@ -49,6 +49,11 @@ public class LindenConfig {
     HOTSWAP,
   }
 
+  public enum CommandType {
+    SWAP_INDEX,
+    MERGE_INDEX,
+  }
+
   private static final Logger LOGGER = LoggerFactory.getLogger(LindenConfig.class);
 
   private Map<String, String> properties;
@@ -62,10 +67,11 @@ public class LindenConfig {
   private String gateway;
   private IndexType indexType;
   private String logPath;
-  private int timeout;
+  private int clusterFutureAwaitTimeout;
+  private int clusterFuturePoolWaitTimeout;
+  private int instanceFuturePoolWaitTimeout;
   private int adminPort;
   private com.xiaomi.linden.thrift.common.LindenSchema schema;
-  private String mergePolicy;
   private boolean enableParallelSearch;
   private int cacheDuration;
   private int cacheSize;
@@ -90,7 +96,9 @@ public class LindenConfig {
     this.port = 9090;
     this.shardId = 0;
     this.indexType = IndexType.MMAP;
-    this.timeout = 1000;
+    this.clusterFutureAwaitTimeout = 2000;
+    this.clusterFuturePoolWaitTimeout = 200;
+    this.instanceFuturePoolWaitTimeout = 200;
     this.enableParallelSearch = true;
     this.cacheDuration = 10;
     this.cacheSize = 50000;
@@ -207,12 +215,30 @@ public class LindenConfig {
     return this;
   }
 
-  public int getTimeout() {
-    return this.timeout;
+  public int getClusterFutureAwaitTimeout() {
+    return this.clusterFutureAwaitTimeout;
   }
 
-  public LindenConfig setTimeout(int timeout) {
-    this.timeout = timeout;
+  public LindenConfig setClusterFutureAwaitTimeout(int timeout) {
+    this.clusterFutureAwaitTimeout = timeout;
+    return this;
+  }
+
+  public int getClusterFuturePoolWaitTimeout() {
+    return this.clusterFuturePoolWaitTimeout;
+  }
+
+  public LindenConfig setClusterFuturePoolWaitTimeout(int timeout) {
+    this.clusterFuturePoolWaitTimeout = timeout;
+    return this;
+  }
+
+  public int getInstanceFuturePoolWaitTimeout() {
+    return this.instanceFuturePoolWaitTimeout;
+  }
+
+  public LindenConfig setInstanceFuturePoolWaitTimeout(int timeout) {
+    this.instanceFuturePoolWaitTimeout = timeout;
     return this;
   }
 
@@ -237,15 +263,6 @@ public class LindenConfig {
     LindenFieldSchema idSchema = new LindenFieldSchema(schema.getId(), LindenType.STRING);
     idSchema.setIndexed(true).setStored(true).setOmitNorms(true);
     fieldSchemaMap.put(idSchema.getName(), idSchema);
-    return this;
-  }
-
-  public String getMergePolicy() {
-    return this.mergePolicy;
-  }
-
-  public LindenConfig setMergePolicy(String mergePolicy) {
-    this.mergePolicy = mergePolicy;
     return this;
   }
 

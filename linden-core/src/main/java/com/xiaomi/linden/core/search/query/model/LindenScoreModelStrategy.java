@@ -101,7 +101,7 @@ public abstract class LindenScoreModelStrategy {
       return null;
     }
     FieldValues fieldValues = null;
-    if (fieldSchema.isListCache()) {
+    if (fieldSchema.isMulti()) {
       switch (fieldSchema.getType()) {
         case INTEGER:
           fieldValues = new FieldValues<>(this, new IntListWrapper(fieldSchema.getName(), context.reader()));
@@ -156,8 +156,9 @@ public abstract class LindenScoreModelStrategy {
   public abstract double computeScore() throws IOException;
 
   public void writeExplanation(String format, Object... args) {
-    if (isExplain)
+    if (isExplain) {
       explanation = String.format(format, args);
+    }
   }
 
   public String getExplanation() {

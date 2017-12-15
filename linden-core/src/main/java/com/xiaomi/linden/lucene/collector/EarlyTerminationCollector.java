@@ -14,27 +14,37 @@
 
 package com.xiaomi.linden.lucene.collector;
 
-import org.apache.lucene.index.AtomicReaderContext;
-import org.apache.lucene.search.*;
-
 import java.io.IOException;
+
+import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.sorter.SortingMergePolicy;
+import org.apache.lucene.search.CollectionTerminatedException;
+import org.apache.lucene.search.Collector;
+import org.apache.lucene.search.Scorer;
+import org.apache.lucene.search.Sort;
+import org.apache.lucene.search.TopDocs;
+import org.apache.lucene.search.TopDocsCollector;
 
 public class EarlyTerminationCollector extends Collector {
 
-  private final int maxDocsToCollect;
-  private int collectedNum = 0;
+  // docs to collect per segment reader
+  private final int numDocsToCollectPerSortedSegment;
+  private int segmentTotalCollect;
+  private int numCollected;
+  private final Sort sort;
   private final TopDocsCollector collector;
-  private int minMatchedDoc = -1;
-  private int maxMatchedDoc = -1;
-  private int totalDocs = 0;
-  private int docBase = 0;
+  private boolean segmentSorted;
+  private static CollectionTerminatedException TERMINATED_EXCEPTION = new CollectionTerminatedException();
 
-  public EarlyTerminationCollector(TopDocsCollector collector, int maxDocsToCollect) {
-    this.collector = collector;
-    this.maxDocsToCollect = maxDocsToCollect;
-    if (maxDocsToCollect < 1) {
-      throw new RuntimeException("maxDocsToCollect < 1");
+
+  public EarlyTerminationCollector(TopDocsCollector collector, Sort sort, int numDocsToCollectPerSortedSegment) {
+    if (numDocsToCollectPerSortedSegment <= 0) {
+      throw new IllegalStateException(
+          "numDocsToCollectPerSortedSegment must always be > 0, got " + numDocsToCollectPerSortedSegment);
     }
+    this.collector = collector;
+    this.sort = sort;
+    this.numDocsToCollectPerSortedSegment = numDocsToCollectPerSortedSegment;
   }
 
   @Override
@@ -45,42 +55,29 @@ public class EarlyTerminationCollector extends Collector {
   @Override
   public void setNextReader(AtomicReaderContext context) throws IOException {
     collector.setNextReader(context);
-    totalDocs += context.reader().maxDoc();
-    docBase = context.docBase;
+    if (sort != null) {
+      segmentSorted = SortingMergePolicy.isSorted(context.reader(), sort);
+      segmentTotalCollect = segmentSorted ? numDocsToCollectPerSortedSegment : 2147483647;
+    } else {
+      segmentTotalCollect = numDocsToCollectPerSortedSegment;
+    }
+    numCollected = 0;
   }
 
   @Override
   public void collect(int doc) throws IOException {
-    if (collectedNum >= maxDocsToCollect) {
-      throw new CollectionTerminatedException();
-    }
     collector.collect(doc);
-    ++collectedNum;
-    if (minMatchedDoc == -1)
-      minMatchedDoc = docBase + doc;
-    maxMatchedDoc = docBase + doc;
+    if (++numCollected >= segmentTotalCollect) {
+      throw TERMINATED_EXCEPTION;
+    }
   }
 
   @Override
   public boolean acceptsDocsOutOfOrder() {
-    return collector.acceptsDocsOutOfOrder();
+    return !segmentSorted && collector.acceptsDocsOutOfOrder();
   }
 
   public TopDocs topDocs() {
-    TopDocs topDocs = collector.topDocs();
-    if (collectedNum < maxDocsToCollect) {
-      topDocs.totalHits = collectedNum;
-      return topDocs;
-    }
-    double ratio = 1.0 * collectedNum / (maxMatchedDoc - minMatchedDoc + 1);
-    topDocs.totalHits = (int) (totalDocs * ratio);
-    return topDocs;
-  }
-
-  public double getEarlyTerminationFactor() {
-    if (collectedNum < maxDocsToCollect  || minMatchedDoc == maxMatchedDoc) {
-      return 1.0;
-    }
-    return (double)totalDocs / (maxMatchedDoc - minMatchedDoc + 1);
+    return collector.topDocs();
   }
 }

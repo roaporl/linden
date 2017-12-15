@@ -77,6 +77,8 @@ public class CoreLindenServiceImpl implements LindenService.ServiceIface {
   private IndexingManager indexingManager;
   private ShardingStrategy shardingStrategy;
   private LindenWarmer lindenWarmer;
+  private int instanceFuturePoolWaitTimeout;
+  private int clusterFuturePoolWaitTimeout;
 
   public CoreLindenServiceImpl(LindenConfig config) throws Exception {
     Preconditions.checkArgument(config != null, "LindenConfig can not be null.");
@@ -95,7 +97,8 @@ public class CoreLindenServiceImpl implements LindenService.ServiceIface {
     LOGGER.info("Linden warmer : {}", lindenWarmer);
 
     LindenZKPathManager zkPathManager = new LindenZKPathManager(config.getClusterUrl());
-    this.shardingStrategy = new DefaultShardingStrategy(zkPathManager.getZK(), zkPathManager.getClusterPath(), config.getShardId());
+    this.shardingStrategy =
+        new DefaultShardingStrategy(zkPathManager.getZK(), zkPathManager.getClusterPath(), config.getShardId());
 
     JSONObject clusterThreadPoolExecutorConf = null;
     JSONObject instanceThreadPoolExecutorConf = null;
@@ -123,8 +126,10 @@ public class CoreLindenServiceImpl implements LindenService.ServiceIface {
         instanceThreadPoolExecutor.getQueue().remainingCapacity(),
         instanceThreadPoolExecutor.getRejectedExecutionHandler().getClass().getName());
 
-    this.clusterExecutorPool = new ExecutorServiceFuturePool(clusterThreadPoolExecutor);
-    this.instanceExecutorPool = new ExecutorServiceFuturePool(instanceThreadPoolExecutor);
+    clusterExecutorPool = new ExecutorServiceFuturePool(clusterThreadPoolExecutor);
+    instanceExecutorPool = new ExecutorServiceFuturePool(instanceThreadPoolExecutor);
+    clusterFuturePoolWaitTimeout = config.getClusterFuturePoolWaitTimeout();
+    instanceFuturePoolWaitTimeout = config.getInstanceFuturePoolWaitTimeout();
 
     if (config.getLindenCoreMode() == LindenConfig.LindenCoreMode.MULTI) {
       lindenCore = new MultiLindenCoreImpl(config);
@@ -154,6 +159,10 @@ public class CoreLindenServiceImpl implements LindenService.ServiceIface {
             Thread.sleep(30000);
             LOGGER.info("Cluster thread pool executor status:" + clusterThreadPoolExecutor);
             LOGGER.info("Instance thread pool executor status:" + instanceThreadPoolExecutor);
+            LOGGER.info("JVM memory status: maxMemory {}MB totalMemory {}MB, freeMemory {}MB",
+                        Runtime.getRuntime().maxMemory() / 1024 / 1024,
+                        Runtime.getRuntime().totalMemory() / 1024 / 1024,
+                        Runtime.getRuntime().freeMemory() / 1024 / 1024);
           } catch (InterruptedException e) {
             break;
           }
@@ -169,7 +178,7 @@ public class CoreLindenServiceImpl implements LindenService.ServiceIface {
     if (threadConfig == null) {
       int min = 2 * availableProcessors;
       int max = 3 * availableProcessors;
-      return new ThreadPoolExecutor(min, max, 1, TimeUnit.MINUTES, new LinkedBlockingQueue<Runnable>(1000),
+      return new ThreadPoolExecutor(min, max, 1, TimeUnit.MINUTES, new LinkedBlockingQueue<Runnable>(500),
                                     new ThreadPoolExecutor.DiscardOldestPolicy());
     }
     int min = threadConfig.containsKey("min") ? threadConfig.getInteger("min") : 2 * availableProcessors + 1;
@@ -210,12 +219,16 @@ public class CoreLindenServiceImpl implements LindenService.ServiceIface {
           long eps = sw.elapsed(TimeUnit.MILLISECONDS);
           if (eps > 10) {
             LOGGER.warn("Warning: instanceExecutorPool took " + eps + "ms to start search.");
+            if (eps > instanceFuturePoolWaitTimeout) {
+              result = buildLindenFailedResult("Waiting time is too long, " + eps + "ms in instance future pool");
+              return result;
+            }
           }
           result = lindenCore.search(request);
           return result;
         } catch (Exception e) {
           String errorStackInfo = Throwables.getStackTraceAsString(e);
-          result = buildFailedResult(errorStackInfo);
+          result = buildLindenFailedResult(errorStackInfo);
         } finally {
           result.setCost((int) sw.elapsed(TimeUnit.MILLISECONDS));
           if (result.isSuccess()) {
@@ -242,6 +255,11 @@ public class CoreLindenServiceImpl implements LindenService.ServiceIface {
           long eps = sw.elapsed(TimeUnit.MILLISECONDS);
           if (eps > 10) {
             LOGGER.warn("Warning: instanceExecutorPool took " + eps + "ms to start delete.");
+            if (eps > instanceFuturePoolWaitTimeout) {
+              response =
+                  ResponseUtils.buildFailedResponse("Waiting time is too long, " + eps + "ms in instance future pool");
+              return response;
+            }
           }
           response = lindenCore.delete(request);
         } catch (Exception e) {
@@ -272,13 +290,15 @@ public class CoreLindenServiceImpl implements LindenService.ServiceIface {
           long eps = sw.elapsed(TimeUnit.MILLISECONDS);
           if (eps > 10) {
             LOGGER.warn("Warning: instanceExecutorPool took " + eps + "ms to start index.");
+            if (eps > instanceFuturePoolWaitTimeout) {
+              response =
+                  ResponseUtils.buildFailedResponse("Waiting time is too long, " + eps + "ms in instance future pool");
+              return response;
+            }
           }
           LindenIndexRequest indexRequest =
               LindenIndexRequestParser.parse(config.getSchema(), content);
-          if (shardingStrategy.accept(indexRequest.getId(), indexRequest.getRouteParam())) {
-            response = lindenCore.index(indexRequest);
-          }
-          response = ResponseUtils.buildFailedResponse("Not accepted by sharding strategy.");
+          response = lindenCore.index(indexRequest);
         } catch (Exception e) {
           String errorStackInfo = Throwables.getStackTraceAsString(e);
           response = ResponseUtils.buildFailedResponse(errorStackInfo);
@@ -309,6 +329,10 @@ public class CoreLindenServiceImpl implements LindenService.ServiceIface {
           long eps = sw.elapsed(TimeUnit.MILLISECONDS);
           if (eps > 10) {
             LOGGER.warn("Warning: instanceExecutorPool took " + eps + "ms to start handleBqlRequest.");
+            if (eps > instanceFuturePoolWaitTimeout) {
+              result = buildLindenFailedResult("Waiting time is too long, " + eps + "ms in instance future pool");
+              return result;
+            }
           }
           LindenRequest lindenRequest = bqlCompiler.compile(bql);
           if (lindenRequest.isSetSearchRequest()) {
@@ -327,12 +351,12 @@ public class CoreLindenServiceImpl implements LindenService.ServiceIface {
               logTag = "failureSingleInstanceDelete";
             }
           } else {
-            result = new LindenResult().setSuccess(false).setError("unsupported Bql");
+            result = buildLindenFailedResult("unsupported Bql");
             logTag = "unsupportedSingleInstanceBql";
           }
         } catch (Exception e) {
           String errorStackInfo = Throwables.getStackTraceAsString(e);
-          result = buildFailedResult(errorStackInfo);
+          result = buildLindenFailedResult(errorStackInfo);
           logTag = "exceptionalSingleInstanceRequest";
 
         } finally {
@@ -400,6 +424,10 @@ public class CoreLindenServiceImpl implements LindenService.ServiceIface {
           long eps = sw.elapsed(TimeUnit.MILLISECONDS);
           if (eps > 10) {
             LOGGER.warn("Warning: clusterExecutorPool took " + eps + "ms to start handleClusterSearchRequest.");
+            if (eps > clusterFuturePoolWaitTimeout) {
+              result = buildLindenFailedResult("Waiting time is too long, " + eps + "ms in cluster future pool");
+              return result;
+            }
           }
           LindenRequest request = bqlCompiler.compile(bql);
           if (request.isSetSearchRequest()) {
@@ -415,7 +443,7 @@ public class CoreLindenServiceImpl implements LindenService.ServiceIface {
           }
         } catch (Exception e) {
           String errorStackInfo = Throwables.getStackTraceAsString(e);
-          result = buildFailedResult(errorStackInfo);
+          result = buildLindenFailedResult(errorStackInfo);
           logTag = "exceptionalSearchBql";
         } finally {
           metricsManager.time(sw.elapsed(TimeUnit.NANOSECONDS), logTag);
@@ -445,6 +473,11 @@ public class CoreLindenServiceImpl implements LindenService.ServiceIface {
           long eps = sw.elapsed(TimeUnit.MILLISECONDS);
           if (eps > 10) {
             LOGGER.warn("Warning: clusterExecutorPool took " + eps + "ms to start handleClusterDeleteRequest.");
+            if (eps > clusterFuturePoolWaitTimeout) {
+              response =
+                  ResponseUtils.buildFailedResponse("Waiting time is too long, " + eps + "ms in cluster future pool");
+              return response;
+            }
           }
           LindenRequest request = bqlCompiler.compile(bql);
           if (request.isSetDeleteRequest()) {
@@ -455,12 +488,12 @@ public class CoreLindenServiceImpl implements LindenService.ServiceIface {
               logTag = "failureDelete";
             }
           } else {
-            response = new Response().setSuccess(false).setError("invalid delete Bql");
+            response = ResponseUtils.buildFailedResponse("invalid delete Bql");
             logTag = "invalidDeleteBql";
           }
         } catch (Exception e) {
           String errorStackInfo = Throwables.getStackTraceAsString(e);
-          response = new Response().setSuccess(false).setError(errorStackInfo);
+          response = ResponseUtils.buildFailedResponse(errorStackInfo);
           logTag = "exceptionalDeleteBql";
         } finally {
           metricsManager.time(sw.elapsed(TimeUnit.NANOSECONDS), logTag);
@@ -487,6 +520,10 @@ public class CoreLindenServiceImpl implements LindenService.ServiceIface {
           long eps = sw.elapsed(TimeUnit.MILLISECONDS);
           if (eps > 10) {
             LOGGER.warn("Warning: clusterExecutorPool took " + eps + "ms to start handleClusterBqlRequest.");
+            if (eps > clusterFuturePoolWaitTimeout) {
+              result = buildLindenFailedResult("Waiting time is too long, " + eps + "ms in cluster future pool");
+              return result;
+            }
           }
           LindenRequest request = bqlCompiler.compile(bql);
           if (request.isSetSearchRequest()) {
@@ -505,12 +542,12 @@ public class CoreLindenServiceImpl implements LindenService.ServiceIface {
               logTag = "failureDelete";
             }
           } else {
-            result = new LindenResult().setSuccess(false).setError("unsupported Bql");
+            result = buildLindenFailedResult("unsupported Bql");
             logTag = "unsupportedBql";
           }
         } catch (Exception e) {
           String errorStackInfo = Throwables.getStackTraceAsString(e);
-          result = buildFailedResult(errorStackInfo);
+          result = buildLindenFailedResult(errorStackInfo);
           logTag = "exceptionalBql";
         } finally {
           metricsManager.time(sw.elapsed(TimeUnit.NANOSECONDS), logTag);
@@ -528,13 +565,92 @@ public class CoreLindenServiceImpl implements LindenService.ServiceIface {
     });
   }
 
+  @Override
+  public Future<Response> handleClusterCommand(final String command) {
+    final Stopwatch sw = Stopwatch.createStarted();
+    return clusterExecutorPool.apply(new Function0<Response>() {
+      @Override
+      public Response apply() {
+        Response response = null;
+        String logTag = null;
+        try {
+          long eps = sw.elapsed(TimeUnit.MILLISECONDS);
+          if (eps > 10) {
+            LOGGER.warn("Warning: clusterExecutorPool took " + eps + "ms to start handleClusterCommand.");
+            if (eps > clusterFuturePoolWaitTimeout) {
+              response =
+                  ResponseUtils.buildFailedResponse("Waiting time is too long, " + eps + "ms in cluster future pool");
+              return response;
+            }
+          }
+          response = lindenCluster.executeCommand(command);
+          if (response.isSuccess()) {
+            logTag = "command";
+          } else {
+            logTag = "failureCommand";
+          }
+        } catch (Exception e) {
+          String errorStackInfo = Throwables.getStackTraceAsString(e);
+          response = ResponseUtils.buildFailedResponse(errorStackInfo);
+          logTag = "exceptionalCommand";
+        } finally {
+          metricsManager.time(sw.elapsed(TimeUnit.NANOSECONDS), logTag);
+          if (response.isSuccess()) {
+            LOGGER.info("handleClusterCommand succeeded command: {}, cost: {} ms.", command,
+                        sw.elapsed(TimeUnit.MILLISECONDS));
+          } else {
+            LOGGER.error("handleClusterCommand failed command: {}, cost: {} ms.", command,
+                         sw.elapsed(TimeUnit.MILLISECONDS));
+          }
+          return response;
+        }
+      }
+    });
+  }
+
+  @Override
+  public Future<Response> executeCommand(final String command) {
+    final Stopwatch sw = Stopwatch.createStarted();
+    return instanceExecutorPool.apply(new Function0<Response>() {
+      @Override
+      public Response apply() {
+        LOGGER.info("Receive command {}", command);
+        Response response = null;
+        try {
+          long eps = sw.elapsed(TimeUnit.MILLISECONDS);
+          if (eps > 10) {
+            LOGGER.warn("Warning: instanceExecutorPool took " + eps + "ms to start executeCommand.");
+            if (eps > instanceFuturePoolWaitTimeout) {
+              response =
+                  ResponseUtils.buildFailedResponse("Waiting time is too long, " + eps + "ms in instance future pool");
+              return response;
+            }
+          }
+          response = lindenCore.executeCommand(command);
+        } catch (Exception e) {
+          String errorStackInfo = Throwables.getStackTraceAsString(e);
+          response = ResponseUtils.buildFailedResponse(errorStackInfo);
+        } finally {
+          if (response.isSuccess()) {
+            LOGGER.info("executeCommand succeeded, command: {}, cost: {} ms.", command,
+                        sw.elapsed(TimeUnit.MILLISECONDS));
+          } else {
+            LOGGER.error("executeCommand failed, content: {}, cost: {} ms.", command,
+                         sw.elapsed(TimeUnit.MILLISECONDS));
+          }
+          return response;
+        }
+      }
+    });
+  }
+
   @Deprecated
   @Override
   public Future<LindenResult> searchByBqlCluster(String bql) {
     return handleClusterBqlRequest(bql);
   }
 
-  private LindenResult buildFailedResult(String error) {
+  private LindenResult buildLindenFailedResult(String error) {
     return new LindenResult(false).setError(error);
   }
 

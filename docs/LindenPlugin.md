@@ -1,11 +1,11 @@
 Linden provides user the ability to rewrite some linden component in plugin mode, for example Analyzer, Merge Policy, Metric Manager, Index Warmer and Similarity. Linden will initialize linden plugin automatically when linden loads config from linden.properties. Of course you need make sure JVM could find the plugin jar.
 
-###Plugin Mode
+### Plugin Mode
 Linden plugin has 2 modes: Direct and Factory.
 
 <br>
 
-###Direct Mode
+### Direct Mode
 In direct mode, the plugin class can be initialized directly by the function init.
  
 	public interface LindenPlugin {
@@ -15,7 +15,7 @@ In direct mode, the plugin class can be initialized directly by the function ini
  
 Your plugin class should implement LindenPlugin interface. init function is called by LindenPluginManager and the config parameter is generated from linden.properties by LindenPluginManager.
 
-#####Gateway
+##### Gateway
 Linden implements KafkaGateway and SimpleFileGateway in plugin mode, so linden supports indexing data from kafka and text file natively.  Index data is in JSON string format, please see [Linden Work Mode Document](LindenWorkMode.md) for detail.
 
 ***com.xiaomi.linden.plugin.gateway.LindenGateway***:
@@ -66,27 +66,28 @@ All config with “gateway” prefix will be stripped the prefix and passed to p
  
 Then Linden will consume data from DataProvider built from KafkaGateway.
 
-#####MetricsManager
+##### MetricsManager
 Linden provides ***com.xiaomi.linden.plugin.metrics.MetricsManager*** which is designed to report linden working status. This is an abstract class, you can report linden status to your own report system by extending MetricsManager and enable it in direct mode.
 
-#####LindenWarmer
+##### LindenWarmer
 Linden provides ***com.xiaomi.linden.plugin.warmer.LindenWarmer*** which is designed to warm linden before linden serves traffic. This is an abstract class, you can warm linden in your own way by extending LindenWarmer and enable it in direct mode.
  
 <br>
 
-###Factory Mode
+### Factory Mode
 In factory mode, you need create a sub class of LindenPluginFactory which implements getInstance to load properties and initialize the plugin class instance.
  
 	public interface LindenPluginFactory<T> {
 	  T getInstance(Map<String,String> params) throws IOException;
 	}
 	 
-#####LindenMMSeg4jAnalyzerFactory
-Linden provides all lucene native analyzers and MMSeg4J (for Chinese) analyzer as index and search analyzer options.
-Index analyzer is used to analyze text when indexing data and search analyzer is used to analyze query when searching. Generally, the two analyzers should be same. You can implement your own analyzer in plugin mode by extending ***org.apache.lucene.analysis.Analyzer***.
- 
-Take MMSeg4J analyzer as example,
- 
+
+<br>
+
+Linden provides all lucene native analyzers and two Chinese analyzers(MMSeg4J and Jieba) as index and search analyzer options.
+Index analyzer is used to analyze text when indexing data and search analyzer is used to analyze query when searching. Generally, the two analyzers should be the same one. You can implement your own analyzer in plugin mode by extending ***org.apache.lucene.analysis.Analyzer***.
+
+##### LindenMMSeg4jAnalyzerFactory
  
 	public class LindenMMSeg4jAnalyzerFactory implements LindenPluginFactory<LindenMMSeg4jAnalyzer> {
 	  private static final String MODE = "mode";
@@ -110,28 +111,59 @@ Now you can use MMSegAnalyzer to extracting index terms by configuration:
 	index.analyzer.dict=/data/mmseg4j_dict
 	index.analyzer.mode=Complex
 	index.analyzer.cut_letter_digit=true
+
+See MMSeg4J analyzer detail: [https://github.com/chenlb/mmseg4j-solr](https://github.com/chenlb/mmseg4j-solr)
 	
-#####LindenStandardAnalyzerFactory
+##### LindenJiebaAnalyzerFactory
+	
+	public class LindenJiebaAnalyzerFactory implements LindenPluginFactory<LindenJiebaAnalyzer> {
+	
+	  private static final String MODE = "mode";
+	  private static final String USER_DICT = "user.dict";
+	
+	  @Override
+	  public LindenJiebaAnalyzer getInstance(Map<String, String> params) throws IOException {
+	    String mode = params.get(MODE);
+	    String userDict = params.get(USER_DICT);
+	    JiebaSegmenter.SegMode segMode = JiebaSegmenter.SegMode.SEARCH;
+	
+	    if (mode != null && mode.equalsIgnoreCase("index")) {
+	      segMode = JiebaSegmenter.SegMode.INDEX;
+	    } else {
+	      segMode = JiebaSegmenter.SegMode.SEARCH;
+	    }
+	    return new LindenJiebaAnalyzer(segMode,userDict);
+	  }
+	}
+
+Jieba Analyzer config example:
+	
+	search.analyzer.class=com.xiaomi.linden.lucene.analyzer.LindenJiebaAnalyzerFactory
+	search.analyzer.mode=search
+	
+See Jieba analyzer detail: [https://github.com/huaban/jieba-analysis](https://github.com/huaban/jieba-analysis)
+
+##### LindenStandardAnalyzerFactory
 ***com.xiaomi.linden.lucene.analyzer.LindenStandardAnalyzerFactory*** is a very simple plugin factory which provides ***org.apache.lucene.analysis.standard.StandardAnalyzer*** with stopwords switch.
 
-#####SortingMergePolicyFactory
+##### SortingMergePolicyFactory
 ***com.xiaomi.linden.lucene.merge.SortingMergePolicyFactory*** provides a configurable sort merge policy which can be used to overwrite default merge policy.
 
-#####TieredMergePolicyFactory
+##### TieredMergePolicyFactory
 ***com.xiaomi.linden.lucene.merge.TieredMergePolicyFactory*** provides a configurable tiered merge policy which can be used to overwrite default merge policy.
 
-#####LindenSimilarityFactory
+##### LindenSimilarityFactory
 ***com.xiaomi.linden.lucene.similarity.LindenSimilarityFactory*** provides a customized linden similarity which extends TFIDFSimilarity. IDF value of linden similarity is read from data file, not calculated from index.
 
-#####MetricsManagerFactory
+##### MetricsManagerFactory
 ***com.xiaomi.linden.plugin.metrics.MetricsManagerFactory*** provides MetricsManager factory, so you can use it for MetricsManager in factory mode.
 
-#####LindenWarmerFactory
+##### LindenWarmerFactory
 ***com.xiaomi.linden.plugin.warmer.LindenWarmerFactory*** provides LindenWarmer factory, so you can use it for LindenWarmer in factory mode.
  
 <br>
  
-###LindenPluginFactoryWrapper
+### LindenPluginFactoryWrapper
 ***com.xiaomi.linden.plugin.LindenPluginFactoryWrapper*** is a plugin factory wrapper. It allows you to import any outside linden factory.
  
 	public class LindenPluginFactoryWrapper<T> implements LindenPluginFactory<T> {

@@ -29,7 +29,9 @@ public class LindenConfigBuilder {
   public static final String INDEX_ANALYZER = "index.analyzer.class";
   public static final String SEARCH_ANALYZER = "search.analyzer.class";
   public static final String SEARCH_SIMILARITY = "search.similarity.class";
-  public static final String SEARCH_TIMEOUT = "search.timeout";
+  public static final String CLUSTER_FUTURE_AWAIT_TIMEOUT = "cluster.future.await.timeout";
+  public static final String CLUSTER_FUTURE_POOL_WAIT_TIMEOUT = "cluster.future.pool.wait.timeout";
+  public static final String INSTANCE_FUTURE_POOL_WAIT_TIMEOUT = "instance.future.pool.wait.timeout";
   public static final String ADMIN_PORT = "admin.port";
   public static final String INDEX_DIRECTORY = "index.directory";
   public static final String CLUSTER_URL = "cluster.url";
@@ -92,17 +94,19 @@ public class LindenConfigBuilder {
     fieldMap.put(LOG_PATH, new FieldInfo("LogPath", String.class));
     fieldMap.put(PLUGIN_PATH, new FieldInfo("PluginPath", String.class));
     fieldMap.put(GATEWAY, new FieldInfo("Gateway", String.class));
-    fieldMap.put(SEARCH_TIMEOUT, new FieldInfo("Timeout", int.class));
+    fieldMap.put(CLUSTER_FUTURE_AWAIT_TIMEOUT, new FieldInfo("ClusterFutureAwaitTimeout", int.class));
+    fieldMap.put(CLUSTER_FUTURE_POOL_WAIT_TIMEOUT, new FieldInfo("ClusterFuturePoolWaitTimeout", int.class));
+    fieldMap.put(INSTANCE_FUTURE_POOL_WAIT_TIMEOUT, new FieldInfo("InstanceFuturePoolWaitTimeout", int.class));
     fieldMap.put(ADMIN_PORT, new FieldInfo("AdminPort", int.class));
     fieldMap.put(ENABLE_PARALLEL_SEARCH, new FieldInfo("EnableParallelSearch", boolean.class));
-    fieldMap.put(MERGE_POLICY, new FieldInfo("MergePolicy", String.class));
     fieldMap.put(CACHE_DURATION, new FieldInfo("CacheDuration", int.class));
     fieldMap.put(CACHE_SIZE, new FieldInfo("CacheSize", int.class));
     fieldMap.put(USE_CACHE, new FieldInfo("EnableCache", boolean.class));
     fieldMap.put(INDEX_REFRESH_TIME, new FieldInfo("IndexRefreshTime", int.class));
     fieldMap.put(LINDEN_CORE_MODE, new FieldInfo("LindenCoreMode", LindenConfig.LindenCoreMode.class));
     fieldMap.put(WEBAPP, new FieldInfo("Webapp", String.class));
-    fieldMap.put(MULTI_INDEX_DIVISION_TYPE, new FieldInfo("MultiIndexDivisionType", LindenConfig.MultiIndexDivisionType.class));
+    fieldMap.put(MULTI_INDEX_DIVISION_TYPE,
+                 new FieldInfo("MultiIndexDivisionType", LindenConfig.MultiIndexDivisionType.class));
     fieldMap.put(MULTI_INDEX_PREFIX_NAME, new FieldInfo("MultiIndexPrefixName", String.class));
     fieldMap.put(MULTI_INDEX_DOC_NUM_LIMIT, new FieldInfo("MultiIndexDocNumLimit", int.class));
     fieldMap.put(MULTI_INDEX_MAX_LIVE_INDEX_NUM, new FieldInfo("MultiIndexMaxLiveIndexNum", int.class));

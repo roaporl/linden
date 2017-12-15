@@ -39,6 +39,7 @@ public class LindenScoreModelStrategyBuilder {
 
   private static final HashSet<String> importMap = Sets.newHashSet();
   private static final Map<String, Class<?>> compiledClassMap = Maps.newConcurrentMap();
+  private static final Map<String, String> failedClassMap = Maps.newConcurrentMap();
   private static final Map<String, Class<?>> pluginClassMap = Maps.newConcurrentMap();
   private static final String LATITUDE = "latitude";
   private static final String LONGITUDE = "longitude";
@@ -177,6 +178,9 @@ public class LindenScoreModelStrategyBuilder {
     if (clazz != null) {
       return (LindenScoreModelStrategy) clazz.newInstance();
     } else {
+      if (failedClassMap.containsKey(className)) {
+        throw new Exception("score model " + model.getName() + " compile failed, please check score model code");
+      }
       StringWriter classBody = new StringWriter();
       PrintWriter classPrinter = new PrintWriter(classBody);
       String classHeader = String.format(classHeaderFormat, className);
@@ -200,7 +204,7 @@ public class LindenScoreModelStrategyBuilder {
             hasId = true;
           }
           String retType;
-          if (field.isListCache()) {
+          if (field.isMulti()) {
             switch (field.getType()) {
               case INTEGER:
                 retType = "int[]";
@@ -243,7 +247,7 @@ public class LindenScoreModelStrategyBuilder {
                 continue;
             }
           }
-          classPrinter.printf("private FieldValues<%s> %s;", retType, field.getName());
+          classPrinter.printf("private FieldValues<%s> %s;\n", retType, field.getName());
           classPrinter.printf("public %s %s() throws IOException {\n" +
                               "    if (%s == null) {\n" +
                               "      %s = getFieldValues(\"%s\");\n" +
@@ -255,7 +259,7 @@ public class LindenScoreModelStrategyBuilder {
 
         // add id field, since id field may not be in schema.getFields()
         if (!hasId) {
-          classPrinter.printf("private FieldValues<String> %s;", schema.getId());
+          classPrinter.printf("private FieldValues<String> %s;\n", schema.getId());
           classPrinter.printf("public String %s() throws IOException {\n" +
                               "    if (%s == null) {\n" +
                               "      %s = getFieldValues(\"%s\");\n" +
@@ -272,7 +276,8 @@ public class LindenScoreModelStrategyBuilder {
       try {
         clazz = JavaCompilerHelper.createClass(className, classBody.toString());
       } catch (Exception e) {
-        throw new Exception(Throwables.getStackTraceAsString(e) + " " + classBody.toString());
+        failedClassMap.put(className, e.getMessage());
+        throw new Exception(Throwables.getStackTraceAsString(e) + "\n" + classBody.toString());
       }
       compiledClassMap.put(className, clazz);
       return (LindenScoreModelStrategy) clazz.newInstance();

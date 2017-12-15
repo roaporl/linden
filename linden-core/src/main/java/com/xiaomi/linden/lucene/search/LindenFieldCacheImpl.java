@@ -16,19 +16,20 @@ package com.xiaomi.linden.lucene.search;
 
 import java.io.IOException;
 import java.io.PrintStream;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.WeakHashMap;
 
-import com.google.common.base.Splitter;
+import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson.JSONArray;
+import org.apache.commons.lang.StringUtils;
 import org.apache.lucene.index.AtomicReader;
 import org.apache.lucene.index.BinaryDocValues;
 import org.apache.lucene.index.DocsEnum;
+import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexReaderContext;
 import org.apache.lucene.index.SegmentReader;
@@ -36,6 +37,7 @@ import org.apache.lucene.index.SortedDocValues;
 import org.apache.lucene.index.SortedSetDocValues;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.TermsEnum;
+import org.apache.lucene.search.DocIdSet;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.FieldCache;
 import org.apache.lucene.util.Accountable;
@@ -49,6 +51,7 @@ import org.slf4j.LoggerFactory;
 
 @SuppressWarnings("unchecked")
 public class LindenFieldCacheImpl implements FieldCache {
+
   private static Logger LOGGER = LoggerFactory.getLogger(LindenFieldCacheImpl.class);
   // standard analyzer will take '1,2' as one token.
   private static final char SPLIT_CHAR = '|';
@@ -56,16 +59,22 @@ public class LindenFieldCacheImpl implements FieldCache {
   private Map<Class<?>, Cache> caches;
 
   static public class DocId {
+
     private int ord;
     private int doc;
+
     public DocId(int ord, int doc) {
       this.ord = ord;
       this.doc = doc;
     }
 
-    public int getOrd() { return ord; }
+    public int getOrd() {
+      return ord;
+    }
 
-    public int getDoc() { return doc; }
+    public int getDoc() {
+      return doc;
+    }
 
     @Override
     public String toString() {
@@ -88,6 +97,7 @@ public class LindenFieldCacheImpl implements FieldCache {
     caches.put(DoubleList.class, new DoubleListCache(this));
     caches.put(StringList.class, new StringListCache(this));
     caches.put(StoredStrings.class, new StoredStringCache(this));
+    caches.put(NotNullFieldDocIdSet.class, new NotNullFieldDocIdSetCache(this));
   }
 
   public UIDMaps getUIDMaps(IndexReaderContext topReaderContext, String uidField) throws IOException {
@@ -123,6 +133,10 @@ public class LindenFieldCacheImpl implements FieldCache {
     return (StoredStrings) caches.get(StoredStrings.class).get(reader, new CacheKey(field, null), false);
   }
 
+  public NotNullFieldDocIdSet getNotNullFieldDocIdSet(AtomicReader reader, String field) throws IOException {
+    return (NotNullFieldDocIdSet) caches.get(NotNullFieldDocIdSet.class).get(reader, new CacheKey(field, null), false);
+  }
+
   final SegmentReader.CoreClosedListener purgeCore = new SegmentReader.CoreClosedListener() {
     @Override
     public void onClose(Object ownerCoreCacheKey) {
@@ -140,13 +154,13 @@ public class LindenFieldCacheImpl implements FieldCache {
 
   private void initReader(AtomicReader reader) {
     if (reader instanceof SegmentReader) {
-      ((SegmentReader) reader).addCoreClosedListener(purgeCore);
+      reader.addCoreClosedListener(purgeCore);
     } else {
       // we have a slow reader of some sort, try to register a purge event
       // rather than relying on gc:
       Object key = reader.getCoreCacheKey();
       if (key instanceof AtomicReader) {
-        ((AtomicReader)key).addReaderClosedListener(purgeReader);
+        ((AtomicReader) key).addReaderClosedListener(purgeReader);
       } else {
         // last chance
         reader.addReaderClosedListener(purgeReader);
@@ -165,7 +179,8 @@ public class LindenFieldCacheImpl implements FieldCache {
   }
 
   @Override
-  public Bytes getBytes(AtomicReader reader, String field, ByteParser parser, boolean setDocsWithField) throws IOException {
+  public Bytes getBytes(AtomicReader reader, String field, ByteParser parser, boolean setDocsWithField)
+      throws IOException {
     return FieldCache.DEFAULT.getBytes(reader, field, parser, setDocsWithField);
   }
 
@@ -175,7 +190,8 @@ public class LindenFieldCacheImpl implements FieldCache {
   }
 
   @Override
-  public Shorts getShorts(AtomicReader reader, String field, ShortParser parser, boolean setDocsWithField) throws IOException {
+  public Shorts getShorts(AtomicReader reader, String field, ShortParser parser, boolean setDocsWithField)
+      throws IOException {
     return FieldCache.DEFAULT.getShorts(reader, field, parser, setDocsWithField);
   }
 
@@ -185,7 +201,8 @@ public class LindenFieldCacheImpl implements FieldCache {
   }
 
   @Override
-  public Ints getInts(AtomicReader reader, String field, IntParser parser, boolean setDocsWithField) throws IOException {
+  public Ints getInts(AtomicReader reader, String field, IntParser parser, boolean setDocsWithField)
+      throws IOException {
     return FieldCache.DEFAULT.getInts(reader, field, parser, setDocsWithField);
   }
 
@@ -195,7 +212,8 @@ public class LindenFieldCacheImpl implements FieldCache {
   }
 
   @Override
-  public Floats getFloats(AtomicReader reader, String field, FloatParser parser, boolean setDocsWithField) throws IOException {
+  public Floats getFloats(AtomicReader reader, String field, FloatParser parser, boolean setDocsWithField)
+      throws IOException {
     return FieldCache.DEFAULT.getFloats(reader, field, parser, setDocsWithField);
   }
 
@@ -205,7 +223,8 @@ public class LindenFieldCacheImpl implements FieldCache {
   }
 
   @Override
-  public Longs getLongs(AtomicReader reader, String field, LongParser parser, boolean setDocsWithField) throws IOException {
+  public Longs getLongs(AtomicReader reader, String field, LongParser parser, boolean setDocsWithField)
+      throws IOException {
     return FieldCache.DEFAULT.getLongs(reader, field, parser, setDocsWithField);
   }
 
@@ -215,7 +234,8 @@ public class LindenFieldCacheImpl implements FieldCache {
   }
 
   @Override
-  public Doubles getDoubles(AtomicReader reader, String field, DoubleParser parser, boolean setDocsWithField) throws IOException {
+  public Doubles getDoubles(AtomicReader reader, String field, DoubleParser parser, boolean setDocsWithField)
+      throws IOException {
     return FieldCache.DEFAULT.getDoubles(reader, field, parser, setDocsWithField);
   }
 
@@ -225,7 +245,8 @@ public class LindenFieldCacheImpl implements FieldCache {
   }
 
   @Override
-  public BinaryDocValues getTerms(AtomicReader reader, String field, boolean setDocsWithField, float acceptableOverheadRatio) throws IOException {
+  public BinaryDocValues getTerms(AtomicReader reader, String field, boolean setDocsWithField,
+                                  float acceptableOverheadRatio) throws IOException {
     return FieldCache.DEFAULT.getTerms(reader, field, setDocsWithField, acceptableOverheadRatio);
   }
 
@@ -235,7 +256,8 @@ public class LindenFieldCacheImpl implements FieldCache {
   }
 
   @Override
-  public SortedDocValues getTermsIndex(AtomicReader reader, String field, float acceptableOverheadRatio) throws IOException {
+  public SortedDocValues getTermsIndex(AtomicReader reader, String field, float acceptableOverheadRatio)
+      throws IOException {
     return FieldCache.DEFAULT.getTermsIndex(reader, field, acceptableOverheadRatio);
   }
 
@@ -254,7 +276,7 @@ public class LindenFieldCacheImpl implements FieldCache {
   }
 
   public void purgeByCacheKey(Object coreCacheKey) {
-    for(Cache c : caches.values()) {
+    for (Cache c : caches.values()) {
       c.purgeByCacheKey(coreCacheKey);
     }
   }
@@ -274,24 +296,28 @@ public class LindenFieldCacheImpl implements FieldCache {
 
     final LindenFieldCacheImpl wrapper;
 
-    final Map<Object,Map<CacheKey,Accountable>> readerCache = new WeakHashMap<>();
+    final Map<Object, Map<CacheKey, Accountable>> readerCache = new WeakHashMap<>();
 
     protected abstract Accountable createValue(AtomicReader reader, CacheKey key, boolean setDocsWithField)
         throws IOException;
 
-    /** Remove this reader from the cache, if present. */
+    /**
+     * Remove this reader from the cache, if present.
+     */
     public void purgeByCacheKey(Object coreCacheKey) {
-      synchronized(readerCache) {
+      synchronized (readerCache) {
         readerCache.remove(coreCacheKey);
       }
     }
 
-    /** Sets the key to the value for the provided reader;
-     *  if the key is already set then this doesn't change it. */
+    /**
+     * Sets the key to the value for the provided reader;
+     * if the key is already set then this doesn't change it.
+     */
     public void put(AtomicReader reader, CacheKey key, Accountable value) {
       final Object readerKey = reader.getCoreCacheKey();
       synchronized (readerCache) {
-        Map<CacheKey,Accountable> innerCache = readerCache.get(readerKey);
+        Map<CacheKey, Accountable> innerCache = readerCache.get(readerKey);
         if (innerCache == null) {
           // First time this reader is using FieldCache
           innerCache = new HashMap<>();
@@ -308,7 +334,7 @@ public class LindenFieldCacheImpl implements FieldCache {
     }
 
     public Accountable get(AtomicReader reader, CacheKey key, boolean setDocsWithField) throws IOException {
-      Map<CacheKey,Accountable> innerCache;
+      Map<CacheKey, Accountable> innerCache;
       Accountable value;
       final Object readerKey = reader.getCoreCacheKey();
       synchronized (readerCache) {
@@ -357,10 +383,10 @@ public class LindenFieldCacheImpl implements FieldCache {
 
     private void printNewInsanity(PrintStream infoStream, Object value) {
       final FieldCacheSanityChecker.Insanity[] insanities = FieldCacheSanityChecker.checkSanity(wrapper);
-      for(int i=0;i<insanities.length;i++) {
+      for (int i = 0; i < insanities.length; i++) {
         final FieldCacheSanityChecker.Insanity insanity = insanities[i];
         final CacheEntry[] entries = insanity.getCacheEntries();
-        for(int j=0;j<entries.length;j++) {
+        for (int j = 0; j < entries.length; j++) {
           if (entries[j].getValue() == value) {
             // OK this insanity involves our entry
             infoStream.println("WARNING: new FieldCache insanity created\nDetails: " + insanity.toString());
@@ -373,26 +399,35 @@ public class LindenFieldCacheImpl implements FieldCache {
     }
   }
 
-  /** Expert: Every composite-key in the internal cache is of this type. */
+  /**
+   * Expert: Every composite-key in the internal cache is of this type.
+   */
   static class CacheKey {
+
     final String field;        // which Field
     final Object custom;       // which custom comparator or parser
 
-    /** Creates one of these objects for a custom comparator/parser. */
+    /**
+     * Creates one of these objects for a custom comparator/parser.
+     */
     CacheKey(String field, Object custom) {
       this.field = field;
       this.custom = custom;
     }
 
-    /** Two of these are equal iff they reference the same field and type. */
+    /**
+     * Two of these are equal iff they reference the same field and type.
+     */
     @Override
-    public boolean equals (Object o) {
+    public boolean equals(Object o) {
       if (o instanceof CacheKey) {
         CacheKey other = (CacheKey) o;
         if (other.field.equals(field)) {
           if (other.custom == null) {
-            if (custom == null) return true;
-          } else if (other.custom.equals (custom)) {
+            if (custom == null) {
+              return true;
+            }
+          } else if (other.custom.equals(custom)) {
             return true;
           }
         }
@@ -400,10 +435,12 @@ public class LindenFieldCacheImpl implements FieldCache {
       return false;
     }
 
-    /** Composes a hashcode based on the field and type. */
+    /**
+     * Composes a hashcode based on the field and type.
+     */
     @Override
     public int hashCode() {
-      return field.hashCode() ^ (custom==null ? 0 : custom.hashCode());
+      return field.hashCode() ^ (custom == null ? 0 : custom.hashCode());
     }
   }
 
@@ -411,6 +448,7 @@ public class LindenFieldCacheImpl implements FieldCache {
    * Placeholder indicating creation of this cache is currently in-progress.
    */
   public static final class CreationPlaceholder implements Accountable {
+
     Accountable value;
 
     @Override
@@ -442,7 +480,7 @@ public class LindenFieldCacheImpl implements FieldCache {
 
         DocsEnum docs = null;
         FixedBitSet docsWithField = null;
-        while(true) {
+        while (true) {
           final BytesRef term = termsEnum.next();
           if (term == null) {
             break;
@@ -468,11 +506,14 @@ public class LindenFieldCacheImpl implements FieldCache {
     }
 
     protected abstract TermsEnum termsEnum(Terms terms) throws IOException;
+
     protected abstract void visitTerm(BytesRef term);
+
     protected abstract void visitDoc(int docID);
   }
 
   static final class UIDCache extends Cache {
+
     UIDCache(LindenFieldCacheImpl wrapper) {
       super(wrapper);
     }
@@ -506,6 +547,7 @@ public class LindenFieldCacheImpl implements FieldCache {
   }
 
   static public class PerReaderUIDMaps implements Accountable {
+
     private final Map<String, Integer> uidMaps;
     private int ord;
 
@@ -518,7 +560,9 @@ public class LindenFieldCacheImpl implements FieldCache {
       return uidMaps.get(uid);
     }
 
-    public int getOrd() { return ord; }
+    public int getOrd() {
+      return ord;
+    }
 
     @Override
     public long ramBytesUsed() {
@@ -528,11 +572,13 @@ public class LindenFieldCacheImpl implements FieldCache {
   }
 
   static public class UIDMaps {
+
     private PerReaderUIDMaps[] uidMapsArray;
 
     public UIDMaps(PerReaderUIDMaps[] uidMapsArray) {
       this.uidMapsArray = uidMapsArray;
     }
+
     public DocId get(String uid) {
       for (PerReaderUIDMaps uidMaps : uidMapsArray) {
         Integer doc = uidMaps.get(uid);
@@ -545,6 +591,7 @@ public class LindenFieldCacheImpl implements FieldCache {
   }
 
   static public class IntListCache extends Cache {
+
     IntListCache(LindenFieldCacheImpl wrapper) {
       super(wrapper);
     }
@@ -554,56 +601,32 @@ public class LindenFieldCacheImpl implements FieldCache {
         throws IOException {
       int maxDoc = reader.maxDoc();
 
-      final int [][]matrix = new int[maxDoc][];
+      final int[][] matrix = new int[maxDoc][];
       BinaryDocValues valuesIn = reader.getBinaryDocValues(key.field);
-      if (valuesIn != null) {
+      if (valuesIn == null) {
         for (int i = 0; i < maxDoc; ++i) {
-          String str = valuesIn.get(i).utf8ToString();
-          List<Integer> array = new ArrayList<>();
-          for (String s : Splitter.on(SPLIT_CHAR).split(str)) {
-            if (!s.isEmpty()) {
-              array.add(Integer.valueOf(s));
-            }
-          }
-          matrix[i] = new int[array.size()];
-          for (int j = 0; j < array.size(); ++j) {
-            matrix[i][j] = array.get(j);
-          }
+          matrix[i] = new int[0];
         }
         return new IntList(matrix);
       }
-
-      Uninvert u = new Uninvert() {
-        List<Integer> array;
-        @Override
-        public void visitTerm(BytesRef term) {
-          array = new ArrayList<>();
-          String str = term.utf8ToString();
-          for (String s : Splitter.on(SPLIT_CHAR).split(str)) {
-            if (!s.isEmpty())
-              array.add(Integer.valueOf(s));
-          }
+      for (int i = 0; i < maxDoc; ++i) {
+        String str = valuesIn.get(i).utf8ToString();
+        if (StringUtils.isEmpty(str)) {
+          matrix[i] = new int[0];
+          continue;
         }
-
-        @Override
-        public void visitDoc(int docID) {
-          matrix[docID] = new int[array.size()];
-          for (int i = 0; i < array.size(); ++i) {
-            matrix[docID][i] = array.get(i);
-          }
+        JSONArray array = JSON.parseArray(str);
+        matrix[i] = new int[array.size()];
+        for (int j = 0; j < array.size(); ++j) {
+          matrix[i][j] = array.getInteger(j);
         }
-
-        @Override
-        protected TermsEnum termsEnum(Terms terms) throws IOException {
-          return terms.iterator(null);
-        }
-      };
-      u.uninvert(reader, key.field, setDocsWithField);
+      }
       return new IntList(matrix);
     }
   }
 
   static public class LongListCache extends Cache {
+
     LongListCache(LindenFieldCacheImpl wrapper) {
       super(wrapper);
     }
@@ -613,56 +636,32 @@ public class LindenFieldCacheImpl implements FieldCache {
         throws IOException {
       int maxDoc = reader.maxDoc();
 
-      final long [][]matrix = new long[maxDoc][];
+      final long[][] matrix = new long[maxDoc][];
       BinaryDocValues valuesIn = reader.getBinaryDocValues(key.field);
-      if (valuesIn != null) {
+      if (valuesIn == null) {
         for (int i = 0; i < maxDoc; ++i) {
-          String str = valuesIn.get(i).utf8ToString();
-          List<Long> array = new ArrayList<>();
-          for (String s : Splitter.on(SPLIT_CHAR).split(str)) {
-            if (!s.isEmpty()) {
-              array.add(Long.valueOf(s));
-            }
-          }
-          matrix[i] = new long[array.size()];
-          for (int j = 0; j < array.size(); ++j) {
-            matrix[i][j] = array.get(j);
-          }
+          matrix[i] = new long[0];
         }
         return new LongList(matrix);
       }
-
-      Uninvert u = new Uninvert() {
-        List<Long> array;
-        @Override
-        public void visitTerm(BytesRef term) {
-          array = new ArrayList<>();
-          String str = term.utf8ToString();
-          for (String s : Splitter.on(SPLIT_CHAR).split(str)) {
-            if (!s.isEmpty())
-              array.add(Long.valueOf(s));
-          }
+      for (int i = 0; i < maxDoc; ++i) {
+        String str = valuesIn.get(i).utf8ToString();
+        if (StringUtils.isEmpty(str)) {
+          matrix[i] = new long[0];
+          continue;
         }
-
-        @Override
-        public void visitDoc(int docID) {
-          matrix[docID] = new long[array.size()];
-          for (int i = 0; i < array.size(); ++i) {
-            matrix[docID][i] = array.get(i);
-          }
+        JSONArray array = JSON.parseArray(str);
+        matrix[i] = new long[array.size()];
+        for (int j = 0; j < array.size(); ++j) {
+          matrix[i][j] = array.getInteger(j);
         }
-
-        @Override
-        protected TermsEnum termsEnum(Terms terms) throws IOException {
-          return terms.iterator(null);
-        }
-      };
-      u.uninvert(reader, key.field, setDocsWithField);
+      }
       return new LongList(matrix);
     }
   }
 
   static public class FloatListCache extends Cache {
+
     FloatListCache(LindenFieldCacheImpl wrapper) {
       super(wrapper);
     }
@@ -672,56 +671,32 @@ public class LindenFieldCacheImpl implements FieldCache {
         throws IOException {
       int maxDoc = reader.maxDoc();
 
-      final float [][]matrix = new float[maxDoc][];
+      final float[][] matrix = new float[maxDoc][];
       BinaryDocValues valuesIn = reader.getBinaryDocValues(key.field);
-      if (valuesIn != null) {
+      if (valuesIn == null) {
         for (int i = 0; i < maxDoc; ++i) {
-          String str = valuesIn.get(i).utf8ToString();
-          List<Float> array = new ArrayList<>();
-          for (String s : Splitter.on(SPLIT_CHAR).split(str)) {
-            if (!s.isEmpty()) {
-              array.add(Float.valueOf(s));
-            }
-          }
-          matrix[i] = new float[array.size()];
-          for (int j = 0; j < array.size(); ++j) {
-            matrix[i][j] = array.get(j);
-          }
+          matrix[i] = new float[0];
         }
         return new FloatList(matrix);
       }
-
-      Uninvert u = new Uninvert() {
-        List<Float> array;
-        @Override
-        public void visitTerm(BytesRef term) {
-          array = new ArrayList<>();
-          String str = term.utf8ToString();
-          for (String s : Splitter.on(SPLIT_CHAR).split(str)) {
-            if (!s.isEmpty())
-              array.add(Float.valueOf(s));
-          }
+      for (int i = 0; i < maxDoc; ++i) {
+        String str = valuesIn.get(i).utf8ToString();
+        if (StringUtils.isEmpty(str)) {
+          matrix[i] = new float[0];
+          continue;
         }
-
-        @Override
-        public void visitDoc(int docID) {
-          matrix[docID] = new float[array.size()];
-          for (int i = 0; i < array.size(); ++i) {
-            matrix[docID][i] = array.get(i);
-          }
+        JSONArray array = JSON.parseArray(str);
+        matrix[i] = new float[array.size()];
+        for (int j = 0; j < array.size(); ++j) {
+          matrix[i][j] = array.getFloat(j);
         }
-
-        @Override
-        protected TermsEnum termsEnum(Terms terms) throws IOException {
-          return terms.iterator(null);
-        }
-      };
-      u.uninvert(reader, key.field, setDocsWithField);
+      }
       return new FloatList(matrix);
     }
   }
 
   static public class DoubleListCache extends Cache {
+
     DoubleListCache(LindenFieldCacheImpl wrapper) {
       super(wrapper);
     }
@@ -731,56 +706,32 @@ public class LindenFieldCacheImpl implements FieldCache {
         throws IOException {
       int maxDoc = reader.maxDoc();
 
-      final double [][]matrix = new double[maxDoc][];
+      final double[][] matrix = new double[maxDoc][];
       BinaryDocValues valuesIn = reader.getBinaryDocValues(key.field);
-      if (valuesIn != null) {
+      if (valuesIn == null) {
         for (int i = 0; i < maxDoc; ++i) {
-          String str = valuesIn.get(i).utf8ToString();
-          List<Double> array = new ArrayList<>();
-          for (String s : Splitter.on(SPLIT_CHAR).split(str)) {
-            if (!s.isEmpty()) {
-              array.add(Double.valueOf(s));
-            }
-          }
-          matrix[i] = new double[array.size()];
-          for (int j = 0; j < array.size(); ++j) {
-            matrix[i][j] = array.get(j);
-          }
+          matrix[i] = new double[0];
         }
         return new DoubleList(matrix);
       }
-
-      Uninvert u = new Uninvert() {
-        List<Double> array;
-        @Override
-        public void visitTerm(BytesRef term) {
-          array = new ArrayList<>();
-          String str = term.utf8ToString();
-          for (String s : Splitter.on(SPLIT_CHAR).split(str)) {
-            if (!s.isEmpty())
-              array.add(Double.valueOf(s));
-          }
+      for (int i = 0; i < maxDoc; ++i) {
+        String str = valuesIn.get(i).utf8ToString();
+        if (StringUtils.isEmpty(str)) {
+          matrix[i] = new double[0];
+          continue;
         }
-
-        @Override
-        public void visitDoc(int docID) {
-          matrix[docID] = new double[array.size()];
-          for (int i = 0; i < array.size(); ++i) {
-            matrix[docID][i] = array.get(i);
-          }
+        JSONArray array = JSON.parseArray(str);
+        matrix[i] = new double[array.size()];
+        for (int j = 0; j < array.size(); ++j) {
+          matrix[i][j] = array.getFloat(j);
         }
-
-        @Override
-        protected TermsEnum termsEnum(Terms terms) throws IOException {
-          return terms.iterator(null);
-        }
-      };
-      u.uninvert(reader, key.field, setDocsWithField);
+      }
       return new DoubleList(matrix);
     }
   }
 
   static public class StringListCache extends Cache {
+
     StringListCache(LindenFieldCacheImpl wrapper) {
       super(wrapper);
     }
@@ -790,57 +741,34 @@ public class LindenFieldCacheImpl implements FieldCache {
         throws IOException {
       int maxDoc = reader.maxDoc();
 
-      final String [][]matrix = new String[maxDoc][];
+      final String[][] matrix = new String[maxDoc][];
       BinaryDocValues valuesIn = reader.getBinaryDocValues(key.field);
-      if (valuesIn != null) {
+      if (valuesIn == null) {
         for (int i = 0; i < maxDoc; ++i) {
-          String str = valuesIn.get(i).utf8ToString();
-          List<String> array = new ArrayList<>();
-          for (String s : Splitter.on(SPLIT_CHAR).split(str)) {
-            if (!s.isEmpty()) {
-              array.add(s);
-            }
-          }
-          matrix[i] = new String[array.size()];
-          for (int j = 0; j < array.size(); ++j) {
-            matrix[i][j] = array.get(j);
-          }
+          matrix[i] = new String[0];
         }
         return new StringList(matrix);
       }
-
-      Uninvert u = new Uninvert() {
-        List<String> array;
-        @Override
-        public void visitTerm(BytesRef term) {
-          array = new ArrayList<>();
-          String str = term.utf8ToString();
-          for (String s : Splitter.on(SPLIT_CHAR).split(str)) {
-            if (!s.isEmpty())
-              array.add(s);
-          }
+      for (int i = 0; i < maxDoc; ++i) {
+        String str = valuesIn.get(i).utf8ToString();
+        if (StringUtils.isEmpty(str)) {
+          matrix[i] = new String[0];
+          continue;
         }
-
-        @Override
-        public void visitDoc(int docID) {
-          matrix[docID] = new String[array.size()];
-          for (int i = 0; i < array.size(); ++i) {
-            matrix[docID][i] = array.get(i);
-          }
+        JSONArray array = JSON.parseArray(str);
+        matrix[i] = new String[array.size()];
+        for (int j = 0; j < array.size(); ++j) {
+          matrix[i][j] = array.getString(j);
         }
-
-        @Override
-        protected TermsEnum termsEnum(Terms terms) throws IOException {
-          return terms.iterator(null);
-        }
-      };
-      u.uninvert(reader, key.field, setDocsWithField);
+      }
       return new StringList(matrix);
     }
   }
 
   public static class LongList implements Accountable {
+
     long[][] matrix;
+
     public LongList(long[][] matrix) {
       this.matrix = matrix;
     }
@@ -856,7 +784,9 @@ public class LindenFieldCacheImpl implements FieldCache {
   }
 
   public static class IntList implements Accountable {
+
     int[][] matrix;
+
     public IntList(int[][] matrix) {
       this.matrix = matrix;
     }
@@ -872,7 +802,9 @@ public class LindenFieldCacheImpl implements FieldCache {
   }
 
   public static class FloatList implements Accountable {
+
     float[][] matrix;
+
     public FloatList(float[][] matrix) {
       this.matrix = matrix;
     }
@@ -888,7 +820,9 @@ public class LindenFieldCacheImpl implements FieldCache {
   }
 
   public static class DoubleList implements Accountable {
+
     double[][] matrix;
+
     public DoubleList(double[][] matrix) {
       this.matrix = matrix;
     }
@@ -904,7 +838,9 @@ public class LindenFieldCacheImpl implements FieldCache {
   }
 
   public static class StringList implements Accountable {
+
     String[][] matrix;
+
     public StringList(String[][] matrix) {
       this.matrix = matrix;
     }
@@ -920,6 +856,7 @@ public class LindenFieldCacheImpl implements FieldCache {
   }
 
   static public class StoredStringCache extends Cache {
+
     StoredStringCache(LindenFieldCacheImpl wrapper) {
       super(wrapper);
     }
@@ -932,9 +869,10 @@ public class LindenFieldCacheImpl implements FieldCache {
   }
 
   public static class StoredStrings implements Accountable {
+
     final String field;
     final Set<String> fieldSet;
-    final String []array;
+    final String[] array;
 
     public StoredStrings(int maxDoc, String fieldName) {
       field = fieldName;
@@ -963,6 +901,97 @@ public class LindenFieldCacheImpl implements FieldCache {
     @Override
     public long ramBytesUsed() {
       return 0;
+    }
+  }
+
+  public static class NotNullFieldDocIdSet extends DocIdSet {
+
+    private DocIdSet underlying;
+
+    public NotNullFieldDocIdSet(DocIdSet docIdSet) {
+      this.underlying = docIdSet;
+    }
+
+    public DocIdSet getDocIdSet() {
+      return underlying;
+    }
+
+    @Override
+    public Bits bits() throws IOException {
+      return underlying.bits();
+    }
+
+    @Override
+    public DocIdSetIterator iterator() throws IOException {
+      return underlying.iterator();
+    }
+  }
+
+
+  public static class NotNullFieldDocIdSetCache extends Cache {
+
+    NotNullFieldDocIdSetCache(LindenFieldCacheImpl wrapper) {
+      super(wrapper);
+    }
+
+    @Override
+    protected Accountable createValue(final AtomicReader reader, CacheKey key, boolean setDocsWithField)
+        throws IOException {
+      final String field = key.field;
+      final int maxDoc = reader.maxDoc();
+
+      FixedBitSet bitSet = new FixedBitSet(maxDoc);
+      NotNullFieldDocIdSet res = new NotNullFieldDocIdSet(bitSet);
+      final FieldInfo fieldInfo = reader.getFieldInfos().fieldInfo(key.field);
+      if (fieldInfo == null) {
+        // field does not exist or has no value
+        return res;
+      } else if (fieldInfo.hasDocValues()) {
+        Bits bits = reader.getDocsWithField(key.field);
+        if (bits == null) {
+          return res;
+        } else {
+          for (int i = 0; i < maxDoc; ++i) {
+            if (bits.get(i)) {
+              bitSet.set(i);
+            }
+          }
+          return res;
+        }
+      } else if (!fieldInfo.isIndexed()) {
+        return res;
+      }
+
+      // Visit all docs that have terms for this field
+      Terms terms = reader.terms(field);
+      if (terms != null) {
+        final int termsDocCount = terms.getDocCount();
+        assert termsDocCount <= maxDoc;
+        if (termsDocCount == maxDoc) {
+          // Fast case: all docs have this field
+          bitSet.set(0, maxDoc);
+          return res;
+        }
+
+        final TermsEnum termsEnum = terms.iterator(null);
+        DocsEnum docs = null;
+        while (true) {
+          final BytesRef term = termsEnum.next();
+          if (term == null) {
+            break;
+          }
+          docs = termsEnum.docs(null, docs, DocsEnum.FLAG_NONE);
+          while (true) {
+            final int docID = docs.nextDoc();
+            if (docID == DocIdSetIterator.NO_MORE_DOCS) {
+              break;
+            }
+            // set this bit
+            bitSet.set(docID);
+          }
+        }
+      }
+      return res;
     }
   }
 }
